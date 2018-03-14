@@ -24,13 +24,19 @@
 #define maxammo 4
 #define maxHealth 4
 #define maxcombo 15
+#define sceneCnt 3
+#define camYoffset 2
+#define aiSpeed 9 //how many times a player can move before the ai does
 unsigned char playerXPos = 0; // current position of the player on the x axis
 unsigned char playerYPos = 0; // currednt position on the y axis
 signed char playerYVel = termVel; // how fast the player falls
+unsigned char playerScn = 0;
 unsigned char playerReload = 0; // if zero we can shoot
 unsigned char playerAmmo = maxammo;
 unsigned char playerHealth = maxHealth;
 unsigned char playerCombo = 0;
+//unsigned char camPos = 0;
+//unsigned char scenePos = 0;
 
 ///MUCH OF THIS SHOULD BE PUT INTO HEADERS AND SUCH VVVVV
 void tickLCDClk(){//ticks the CLK pin on the LCD
@@ -117,8 +123,8 @@ enum pixState leftEdge = off;
 enum pixState rightEdge = off;
 enum pixState jumpEdge = off;
 enum spriteType{player, tile,brokentile,lballoon, rballoon, ghost,air};//types of different sprites, all the same size
-enum actorState{na, wait1,wait2, move, moved}; //"actors" are any tiles with rudimentary AI, such as the balloons. non-"actors" such as air or tiles get the na state, as in n/a, not available
-enum ButtonState{notpressed, check1, check2, pressed};//basically another boolean but whateber
+enum actorState{na, wait, move, moved}; //"actors" are any tiles with rudimentary AI, such as the balloons. non-"actors" such as air or tiles get the na state, as in n/a, not available
+enum ButtonState{notpressed, check1, check2, pressed};
 enum ButtonState leftCheck = notpressed;
 enum ButtonState rightCheck = notpressed;
 enum ButtonState jumpCheck = notpressed;
@@ -248,7 +254,7 @@ void makeScene(spriteScene *scn){//takes in a scene of sprite types and makes th
 					unsigned char pixel = scn->picture[spx][spy].image[y][x];//look at those array accesses christ
 					val = val | (pixel << y); 
 				}
-				arr[arry][arrx] = val; //really confusing how these ended up backways
+				arr[arry][arrx] = ~val; //really confusing how these ended up backways
 				arrx++;
 			}
 			if (arrx >= 84){arrx = 0; arry++;}//its ok if i leave this out of the for loop since 6 evenly divides 84 i think
@@ -311,16 +317,30 @@ void drawSweep(){//this is just a cool sweep to draw, good for a transition mayb
 		}
 	}
 }
-void SetSprites(spriteScene *scn){ //given an array of sprite types and a scene, set the appropriate sprites to the scene
-	for (unsigned char x = 0; x < sprperx; x++){
-		for (unsigned char y = 0; y < sprpery; y++){
-			if (x == playerXPos && y == playerYPos && playerHealth){
-				GetSprite(player,&(scn->picture[x][y]));
+void SetSprites(spriteScene scn[][3]){ //given an array of sprite types and a scene, set the appropriate sprites to the scene
+	unsigned char curY;
+	unsigned char currScn = playerScn;
+	if (playerYPos < camYoffset){
+		curY = sprpery-(camYoffset-playerYPos);
+		if (playerScn){currScn--;}
+		else {currScn = sceneCnt-1;}
+	}
+	else {curY = playerYPos-camYoffset;}
+	for (unsigned char y = 0; y < sprpery; y++){
+		for (unsigned char x = 0; x < sprperx; x++){
+			if (x == playerXPos && curY == playerYPos && playerHealth){
+				GetSprite(player,&((*scn+playerScn)->picture[x][y]));
 			}
 			else{
-				GetSprite(scn->sprites[x][y],&(scn->picture[x][y]));
+				GetSprite((*scn + currScn)->sprites[x][curY],&((*scn+playerScn)->picture[x][y]));
 			}
 		}
+		if (curY == sprpery-1){
+			curY = 0;
+			if (currScn == sceneCnt-1){currScn = 0;}
+			else {currScn++;}
+		}
+		else {curY++;}
 	}
 }
 void GetScene(spriteScene *scn){//here;s where i manually craft bits of the level to be randomly picked and cobbled together during gameplay
@@ -342,18 +362,18 @@ void GetScene(spriteScene *scn){//here;s where i manually craft bits of the leve
 				{air,air,air,brokentile,air,air,air,air,air,air,air,air,air,air},
 				{air,air,air,air,air,air,lballoon,air,air,tile,lballoon,air,air,air},
 				{air,air,air,brokentile,air,air,rballoon,air,air,tile,air,air,air,air},
-				{air,air,air,tile,tile,air,air,air,air,tile,air,air,air,air}
+				{air,air,tile,tile,tile,air,air,tile,tile,tile,air,air,air,air}
 			};
 			for (unsigned char x = 0; x < sprperx; x++)
 			for (unsigned char y = 0; y < sprpery; y++){
 				scn->sprites[x][y] = lvl[x][y];
 			}
-			SetSprites(scn);
+			///SetSprites(scn);
 			///////////////////////////VVVVVVVVVV PUT THIS IN A FUNCTION BEFORE MAKING MORE LEVEL LAYOUTS MORON VVVVVVV/////////////////////
 			for (unsigned char x = 0; x < sprperx; x++)
 			for (unsigned char y = 0; y < sprpery; y++){
 				if (lvl[x][y] == lballoon || lvl[x][y] == rballoon || lvl[x][y] == ghost){ //gives these boys their proper actor states
-					scn->states[x][y] = wait1;
+					scn->states[x][y] = wait;
 				}
 				else{scn->states[x][y] = na;}//otherwise they're a nobody
 			}
@@ -361,7 +381,7 @@ void GetScene(spriteScene *scn){//here;s where i manually craft bits of the leve
 	}
 }
 //////////////////////////////////////////////////////////////////////////////V COME HERE LATER FOR HIT DETECTION MORON!!!!!!!! V//////////////////////////////////////////////////////////////////////////////////////////////
-void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState states[][sprperx][sprpery]){ //takes a scene and updates based on status array and is also where i wish the sprite array was included in the scene UPDATE: Did it
+void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState states[][sprperx][sprpery], unsigned char scnNum){ //takes a scene and updates based on status array and is also where i wish the sprite array was included in the scene UPDATE: Did it
 //	enum pixState balloonChange = off; //bootleg bool
 	for (unsigned char x = 0; x < sprperx; x++)
 		for (unsigned char y = 0; y < sprpery; y++){
@@ -371,14 +391,12 @@ void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState state
 				case na:
 				break;
 				case moved:
-					*currState = wait1;
+					*currState = wait;
 					break;
-				case wait1:
-					*currState = wait2;
-					break;
-				case wait2:
+				case wait:
 					*currState = move;
 					break;
+				
 				case move://incoming AI logic here (nested switch)
 					// THE BIOG PROBLEM with this aI:
 					/* a line of actors trying to move left right-aligned will move as one but a line of actors trying to move 
@@ -386,7 +404,7 @@ void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState state
 					switch (*curr){//uggggnnn this function too big already
 						case lballoon: // THE DIFFERENCE between lballoons and rballoons is that lballoons will always move left if possible and opposite for rballons
 							if (!x){// if already at the leftmost part of screen
-								if (x+1 == playerXPos && y == playerYPos && playerHealth){//if player to right hurt he
+								if (x+1 == playerXPos && y == playerYPos && playerHealth && playerScn == scnNum){//if player to right hurt he
 									playerHealth--;
 									*curr = air;
 									*currState = na;
@@ -400,7 +418,7 @@ void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState state
 								else{}//else begrudgingly float in place
 							}	
 							else{
-								if (x-1 == playerXPos && y == playerYPos && playerHealth){//if player to left hurt he
+								if (x-1 == playerXPos && y == playerYPos && playerHealth && playerScn == scnNum){//if player to left hurt he
 									playerHealth--;
 									*curr = air;
 									*currState = na;
@@ -411,7 +429,7 @@ void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState state
 									*(*(*(scn)+x-1)+y) = lballoon;
 									*(*(*(states) + x-1)+y) = moved;
 								}
-								else if (x+1 == playerXPos && y == playerYPos && playerHealth){//if player to right hurt he
+								else if (x+1 == playerXPos && y == playerYPos && playerHealth && playerScn == scnNum){//if player to right hurt he
 									playerHealth--;
 									*curr = air;
 									*currState = na;
@@ -427,7 +445,7 @@ void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState state
 							break;
 						case rballoon://back at it again copy pasting. anyway right balloon move ai
 						if (x == (sprperx-1)){// if already at the rightmost part of screen
-							if (x+1 == playerXPos && y == playerYPos && playerHealth){//if player to left hurt he
+							if (x+1 == playerXPos && y == playerYPos && playerHealth && playerScn == scnNum){//if player to left hurt he
 								playerHealth--;
 								*curr = air;
 								*currState = na;
@@ -442,19 +460,19 @@ void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState state
 							else{}//else begrudgingly float in place
 						}
 						else{
-							if (x-1 == playerXPos && y == playerYPos && playerHealth){//if player to right hurt he
+							if (x+1 == playerXPos && y == playerYPos && playerHealth && playerScn == scnNum){//if player to right hurt he
 								playerHealth--;
 								*curr = air;
 								*currState = na;
 							}
-							if (*(*(*(scn)+x+1)+y) == air){ // if nothing to the right move to the right ok
+							else if (*(*(*(scn)+x+1)+y) == air){ // if nothing to the right move to the right ok
 								*curr = air;
 								*currState = na;
 								*(*(*(scn)+x+1)+y) = rballoon;
 								*(*(*(states)+x+1)+y) = moved;
 								break;
 							}
-							else if (x+1 == playerXPos && y == playerYPos && playerHealth){//if player to left hurt he
+							else if (x-1 == playerXPos && y == playerYPos && playerHealth && playerScn == scnNum){//if player to left hurt he
 								playerHealth--;
 								*curr = air;
 								*currState = na;
@@ -481,31 +499,35 @@ void UpdateActors(enum spriteType scn[][sprperx][sprpery], enum actorState state
 			for (unsigned char y = 0; y < sprpery; y++){
 				enum actorState *temp = (*(*(states) + x)+y);
 				if (*temp == moved){
-					*temp = wait1;	
+					*temp = wait;	
 				}
 			}
 		}
 }
-void UpdatePlayer(spriteScene* scn){//check input and update player
+void UpdatePlayer(spriteScene* scn, spriteScene scnArr[][sceneCnt]){//check input and update player
 	if (leftEdge && !rightEdge){
 		if (playerXPos){
-			playerXPos--;
-			if (scn->sprites[playerXPos][playerYPos] == lballoon || scn->sprites[playerXPos][playerYPos] == rballoon || scn->sprites[playerXPos][playerYPos] == ghost){
-				scn->sprites[playerXPos][playerYPos] = air;
-				scn->states[playerXPos][playerYPos] = na;
-				playerHealth--;
+			if (scn->sprites[playerXPos-1][playerYPos] != tile && scn->sprites[playerXPos -1][playerYPos] != brokentile){
+				playerXPos--;
+				if (scn->sprites[playerXPos][playerYPos] == lballoon || scn->sprites[playerXPos][playerYPos] == rballoon || scn->sprites[playerXPos][playerYPos] == ghost){
+					scn->sprites[playerXPos][playerYPos] = air;
+					scn->states[playerXPos][playerYPos] = na;
+					playerHealth--;
+				}
 			}
-			}
+		}
 	}
 	else if (!leftEdge && rightEdge){
 		if (playerXPos < sprperx-1){
-			playerXPos++;
-			if (scn->sprites[playerXPos][playerYPos] == lballoon || scn->sprites[playerXPos][playerYPos] == rballoon || scn->sprites[playerXPos][playerYPos] == ghost){
-				scn->sprites[playerXPos][playerYPos] = air;
-				scn->states[playerXPos][playerYPos] = na;
-				playerHealth--;
+			if (scn->sprites[playerXPos+1][playerYPos] != tile && scn->sprites[playerXPos+1][playerYPos] != brokentile){
+				playerXPos++;
+				if (scn->sprites[playerXPos][playerYPos] == lballoon || scn->sprites[playerXPos][playerYPos] == rballoon || scn->sprites[playerXPos][playerYPos] == ghost){
+					scn->sprites[playerXPos][playerYPos] = air;
+					scn->states[playerXPos][playerYPos] = na;
+					playerHealth--;
+				}
 			}
-			}
+		}
 	}
 	if (jumpEdge){
 		if (canJump){
@@ -513,46 +535,100 @@ void UpdatePlayer(spriteScene* scn){//check input and update player
 			canJump = off;	
 		}
 	}
+	reloopMov:
 	if (playerYVel < termVel){playerYVel++;}
-	for (unsigned char y = playerYPos; y <= playerYPos+playerYVel; y++){//if we're going down
-		enum spriteType at = scn->sprites[playerXPos][y];
-		if (at == tile || at == brokentile){
-			playerYPos = y-1;
-			playerYVel = 0;
-			canJump = on;
-			break;	
-		}
-		else if (at == lballoon || at == rballoon){
-			scn->sprites[playerXPos][y] = air;
-			scn->states[playerXPos][y] = na;
-			playerAmmo = maxammo;
-			playerYVel = jumpVel+1;//since we passed the playeryvell++ already
-			if (playerCombo < maxcombo){
-				playerCombo++;
+	signed char vel = playerYVel;
+	unsigned char sceneCurr = playerScn;
+	signed char tempYpos = playerYPos;
+	while (vel < 0)	{
+		vel++;
+		tempYpos--;
+		if (tempYpos < 0){
+			if (sceneCurr == 0){
+				sceneCurr = sceneCnt-1;
 			}
-			break;
+			else {sceneCurr--;}
+			tempYpos = sprpery-1;
 		}
-		else if (at == ghost){
-			scn->sprites[playerXPos][y] = air;
-			scn->states[playerXPos][y] = na;
-			playerHealth--;
-		}
-		
-	}
-	for (unsigned char y = playerYPos; y >= playerYPos+playerYVel; y--){//if we're going up
-		enum spriteType at = scn->sprites[playerXPos][y];
+		enum spriteType at = (*scnArr+sceneCurr)->sprites[playerXPos][tempYpos];
 		if (at == tile || at == brokentile){
-			playerYPos = y+1;
+			if (tempYpos == sprpery-1){
+				if (sceneCurr == sceneCnt-1){
+					sceneCurr = 0;
+				}
+				else{sceneCurr++;}
+				tempYpos = 0;
+			}
+			else {tempYpos++;}
+			playerYPos = tempYpos;
 			playerYVel = 0;
 			break;
 		}
 		if (at == lballoon || at == rballoon || at == ghost){
-			scn->sprites[playerXPos][y] = air;
-			scn->states[playerXPos][y] = na;
+			(*scnArr+sceneCurr)->sprites[playerXPos][tempYpos] = air;
+			(*scnArr+sceneCurr)->states[playerXPos][tempYpos] = na;
 			playerHealth--;
 		}
 	}
-	playerYPos += playerYVel;
+	while (vel > 0){
+		vel--;
+		tempYpos++;
+		if (tempYpos >= sprpery){
+			if (sceneCurr == sceneCnt-1){
+				sceneCurr = 0;
+			}
+			else {sceneCurr++;}
+			tempYpos = 0;
+		}
+		enum spriteType at = (*scnArr+sceneCurr)->sprites[playerXPos][tempYpos];
+		canJump = off;
+		if (at == tile || at == brokentile){
+			if (tempYpos == 0){
+				if (sceneCurr == 0){
+					sceneCurr = sceneCnt-1;
+				}
+				else{sceneCurr--;}
+				tempYpos = sprpery-1;
+			}
+			else{tempYpos--;}
+			playerYPos = tempYpos;
+			playerYVel = 0;
+			canJump = on;
+			break;
+		}
+		else if (at == lballoon || at == rballoon){
+			(*scnArr+sceneCurr)->sprites[playerXPos][tempYpos] = air;
+			(*scnArr+sceneCurr)->states[playerXPos][tempYpos] = na;
+			playerAmmo = maxammo;
+			playerYVel = jumpVel+1; //since we passed the playeryvell++ already
+			if (playerCombo < maxcombo){
+				playerCombo++;
+			}
+			goto reloopMov;
+		}
+		else if (at == ghost){
+			scn->sprites[playerXPos][tempYpos] = air;
+			scn->states[playerXPos][tempYpos] = na;
+			playerHealth--;
+		}
+	}
+	if (sceneCurr != playerScn){
+		if (playerYVel > 0){
+			switch (sceneCurr){
+				case 0:
+					GetScene(((*scnArr) + 1));
+					break;
+				case 1:
+					GetScene(((*scnArr) + 2));
+					break;
+				case 2:
+					GetScene(((*scnArr)));
+					break;
+				}
+		}
+		playerScn = sceneCurr;
+	}
+	playerYPos = tempYpos;
 	unsigned char mask = 0x00;
 	switch (playerAmmo){
 		case 0:
@@ -650,27 +726,33 @@ int main(void)
 	PORTB = 0x00;
 	DDRA = 0xFF;
 	unsigned char gametckcnt = 3;
+	unsigned char aiTick = aiSpeed;
 	initLCD();
-	spriteScene disp;
-	GetScene(&disp);
-	makeScene(&disp);
-	TimerSet(25);
+	spriteScene disp[sceneCnt];
+	for (unsigned char i = 0; i < sceneCnt; i++){
+		GetScene(&disp[i]);
+	}
+	SetSprites(&disp);
+	makeScene(&disp[playerScn]);
+	TimerSet(20);
 	TimerOn();
 //	drawSweep();
     while (1) 
     {
-		while (!TimerFlag){
-		/*	if (leftbutton){leftEdge = on;}
-			if (rightbutton){rightEdge = on;}
-			if (jumpbutton){jumpEdge = on;}*/
-		}
+		while (!TimerFlag){}
 		gametckcnt--;
+		aiTick--;
 		UpdateButtons();
 		if (!gametckcnt){
-			if (playerHealth){UpdatePlayer(&disp);}
-			UpdateActors(&disp.sprites, &disp.states);
+			if (playerHealth){UpdatePlayer(&disp[playerScn], &disp);}
+			if (!aiTick){
+				for (unsigned char i = 0; i < sceneCnt; i++){
+					UpdateActors(&(disp[i].sprites), &(disp[i].states), i);
+				}
+				aiTick = aiSpeed;
+			}
 			SetSprites(&disp);
-			makeScene(&disp);
+			makeScene(&disp[playerScn]);
 			gametckcnt = 3;
 			leftEdge = off;
 			leftCheck = notpressed;
